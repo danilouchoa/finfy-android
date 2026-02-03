@@ -1,5 +1,6 @@
 package com.example.finfy
 
+import com.example.finfy.core.ApiConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -13,7 +14,7 @@ object Api {
     // IMPORTANTE:
     // Como você está usando "adb reverse", o celular enxerga a API do PC em 127.0.0.1:4000
     // Se tiver problema com cookie/domínio depois, troque para "http://localhost:4000/api"
-    private const val BASE_URL = "http://127.0.0.1:4000/api"
+    private const val BASE_URL = "${ApiConfig.BASE_URL}api"
     private const val HOST_FOR_COOKIE_DEBUG = "127.0.0.1"
 
     private val cookieJar = SimpleCookieJar()
