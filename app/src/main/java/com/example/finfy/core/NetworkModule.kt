@@ -29,4 +29,9 @@ object NetworkModule {
     private val authApi: AuthApi = retrofit.create(AuthApi::class.java)
 
     val authRepository: AuthRepository = AuthRepository(authApi, TokenStore)
+
+    fun clearSession() {
+        TokenStore.clear()
+        cookieJar.clear()
+    }
 }

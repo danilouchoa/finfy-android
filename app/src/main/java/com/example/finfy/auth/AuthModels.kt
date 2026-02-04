@@ -24,5 +24,19 @@ data class UserDto(
 
 data class BackendErrorPayload(
     val error: String? = null,
-    val message: String? = null
+    val message: String? = null,
+    val data: GoogleConflictData? = null
+)
+
+data class GoogleCredentialRequest(
+    val credential: String
+)
+
+data class GoogleResolveConflictRequest(
+    val credential: String,
+    val strategy: String = "merge_using_google_as_canonical"
+)
+
+data class GoogleConflictData(
+    val email: String? = null
 )

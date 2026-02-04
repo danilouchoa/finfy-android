@@ -11,4 +11,24 @@ class AuthRepository(
         tokenStore.setAccessToken(response.accessToken)
         return response
     }
+
+    suspend fun loginWithGoogle(credential: String): AuthSessionResponse {
+        val response = authApi.googleLogin(GoogleCredentialRequest(credential = credential))
+        tokenStore.setAccessToken(response.accessToken)
+        return response
+    }
+
+    suspend fun resolveGoogleConflict(credential: String): AuthSessionResponse {
+        val response = authApi.resolveGoogleConflict(GoogleResolveConflictRequest(credential = credential))
+        tokenStore.setAccessToken(response.accessToken)
+        return response
+    }
+
+    suspend fun logout() {
+        try {
+            authApi.logout()
+        } finally {
+            tokenStore.clear()
+        }
+    }
 }

@@ -1,8 +1,11 @@
 package com.example.finfy.ui.screens
 
+import android.app.Activity
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,10 +17,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -32,11 +35,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
@@ -49,12 +54,16 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.finfy.BuildConfig
+import com.example.finfy.auth.FeedbackKind
+import com.example.finfy.auth.GoogleAuthClient
+import com.example.finfy.auth.GoogleAuthResult
 import com.example.finfy.auth.LoginEvent
 import com.example.finfy.auth.LoginErrorKind
 import com.example.finfy.auth.LoginViewModel
 import com.example.finfy.auth.LoginViewModelFactory
 import com.example.finfy.auth.isGlobalLoginError
 import com.example.finfy.core.NetworkModule
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collectLatest
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -70,9 +79,17 @@ fun LoginScreen(
     )
     val uiState by viewModel.state.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val emailFocusRequester = remember { FocusRequester() }
     val passwordFocusRequester = remember { FocusRequester() }
     var passwordVisible by remember { mutableStateOf(false) }
+    val googleClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID.trim()
+    val hasGoogleClientId = googleClientId.isNotEmpty()
+    val activity = context as? Activity
+    val googleAuthClient = remember(hasGoogleClientId, activity) {
+        if (hasGoogleClientId && activity != null) GoogleAuthClient.create(activity, googleClientId) else null
+    }
 
     LaunchedEffect(Unit) {
         viewModel.events.collectLatest { event ->
@@ -134,10 +151,16 @@ fun LoginScreen(
         }
 
         uiState.feedback?.let { feedback ->
+            val (variant, title) = when (feedback.kind) {
+                FeedbackKind.Success -> AlertVariant.Success to null
+                FeedbackKind.Info -> AlertVariant.Info to null
+                FeedbackKind.Warning -> AlertVariant.Warning to null
+                FeedbackKind.Error -> AlertVariant.Error to "Erro"
+            }
             InlineAlert(
-                variant = AlertVariant.Success,
-                title = null,
-                message = feedback
+                variant = variant,
+                title = title,
+                message = feedback.message
             )
         }
  
@@ -239,15 +262,75 @@ fun LoginScreen(
             modifier = Modifier.align(Alignment.CenterHorizontally)
         )
 
-        OutlinedButton(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = {},
-            enabled = false
-        ) {
-            Text("Continuar com Google")
+        Box(modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    if (!hasGoogleClientId) {
+                        viewModel.reportGoogleFailure("Google OAuth não configurado.")
+                        return@OutlinedButton
+                    }
+                    if (activity == null) {
+                        viewModel.reportGoogleFailure("Não foi possível iniciar o login com Google.")
+                        return@OutlinedButton
+                    }
+                    val authClient = googleAuthClient
+                    if (authClient == null) {
+                        viewModel.reportGoogleFailure("Google OAuth não configurado.")
+                        return@OutlinedButton
+                    }
+                    viewModel.startGoogleSignIn()
+                    scope.launch {
+                        when (val result = authClient.getIdToken(activity)) {
+                            is GoogleAuthResult.Success -> viewModel.submitGoogle(result.idToken)
+                            is GoogleAuthResult.Failure -> viewModel.reportGoogleFailure(result.message)
+                        }
+                    }
+                },
+                enabled = hasGoogleClientId && !uiState.isGoogleLoading
+            ) {
+                Text("Continuar com Google")
+            }
+            if (uiState.isGoogleLoading) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                    modifier = Modifier.matchParentSize()
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "Sincronizando com Google...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
+    }
+
+    if (uiState.googleConflictOpen) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissGoogleConflict() },
+            title = { Text("Unificar contas com Google") },
+            text = {
+                val emailLabel = uiState.googleConflictEmail ?: "este e-mail"
+                Text("Encontramos uma conta local para $emailLabel. Deseja unificar usando o Google como login principal?")
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.resolveGoogleConflict() },
+                    enabled = !uiState.isGoogleLoading
+                ) { Text("Unificar") }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { viewModel.dismissGoogleConflict() },
+                    enabled = !uiState.isGoogleLoading
+                ) { Text("Cancelar") }
+            }
+        )
     }
 }
 

@@ -3,6 +3,8 @@ package com.example.finfy.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.google.gson.Gson
+import java.io.IOException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -10,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
 
 data class LoginUiState(
     val email: String = "",
@@ -17,8 +20,23 @@ data class LoginUiState(
     val emailError: String? = null,
     val passwordError: String? = null,
     val globalError: LoginErrorState? = null,
-    val feedback: String? = null,
-    val isSubmitting: Boolean = false
+    val feedback: Feedback? = null,
+    val isSubmitting: Boolean = false,
+    val isGoogleLoading: Boolean = false,
+    val googleConflictEmail: String? = null,
+    val googleConflictOpen: Boolean = false
+)
+
+enum class FeedbackKind {
+    Success,
+    Info,
+    Warning,
+    Error
+}
+
+data class Feedback(
+    val kind: FeedbackKind,
+    val message: String
 )
 
 sealed class LoginEvent {
@@ -36,6 +54,9 @@ class LoginViewModel(
 
     private val _events = Channel<LoginEvent>(Channel.BUFFERED)
     val events = _events.receiveAsFlow()
+    private val gson = Gson()
+
+    private var pendingGoogleCredential: String? = null
 
     fun onEmailChange(value: String) {
         _state.update { current ->
@@ -103,7 +124,12 @@ class LoginViewModel(
         viewModelScope.launch {
             try {
                 repository.login(trimmedEmail, current.password)
-                _state.update { it.copy(isSubmitting = false, feedback = "Login realizado! Redirecionando...") }
+                _state.update {
+                    it.copy(
+                        isSubmitting = false,
+                        feedback = Feedback(FeedbackKind.Success, "Login realizado! Redirecionando...")
+                    )
+                }
                 _events.send(LoginEvent.ShowSnackbar("Login realizado! Bem-vindo de volta."))
                 delay(600)
                 _events.send(LoginEvent.NavigateHome)
@@ -133,6 +159,144 @@ class LoginViewModel(
                     }
                 }
             }
+        }
+    }
+
+    fun startGoogleSignIn() {
+        pendingGoogleCredential = null
+        _state.update {
+            it.copy(
+                isGoogleLoading = true,
+                feedback = null,
+                globalError = null,
+                googleConflictOpen = false,
+                googleConflictEmail = null
+            )
+        }
+    }
+
+    fun reportGoogleFailure(message: String) {
+        _state.update {
+            it.copy(
+                isGoogleLoading = false,
+                feedback = Feedback(FeedbackKind.Error, message),
+                googleConflictOpen = false,
+                googleConflictEmail = null
+            )
+        }
+    }
+
+    fun submitGoogle(credential: String) {
+        _state.update {
+            it.copy(
+                isGoogleLoading = true,
+                feedback = null,
+                globalError = null,
+                googleConflictOpen = false,
+                googleConflictEmail = null
+            )
+        }
+
+        viewModelScope.launch {
+            try {
+                repository.loginWithGoogle(credential)
+                _state.update {
+                    it.copy(
+                        isGoogleLoading = false,
+                        feedback = Feedback(FeedbackKind.Success, "Login com Google concluído! Redirecionando...")
+                    )
+                }
+                _events.send(LoginEvent.ShowSnackbar("Login com Google concluído."))
+                delay(600)
+                _events.send(LoginEvent.NavigateHome)
+            } catch (throwable: Throwable) {
+                val backendError = parseBackendError(throwable)
+                if (throwable is HttpException && throwable.code() == 409 && backendError?.error == "ACCOUNT_CONFLICT") {
+                    pendingGoogleCredential = credential
+                    _state.update {
+                        it.copy(
+                            isGoogleLoading = false,
+                            feedback = Feedback(
+                                FeedbackKind.Info,
+                                "Encontramos uma conta local com este e-mail. Deseja unificar com Google?"
+                            ),
+                            googleConflictEmail = backendError.data?.email,
+                            googleConflictOpen = true
+                        )
+                    }
+                    return@launch
+                }
+
+                val message = if (throwable is IOException) {
+                    LoginErrorMessages.NETWORK
+                } else {
+                    backendError?.message ?: "Não foi possível autenticar com Google."
+                }
+                _state.update {
+                    it.copy(
+                        isGoogleLoading = false,
+                        feedback = Feedback(FeedbackKind.Error, message),
+                        googleConflictOpen = false,
+                        googleConflictEmail = null
+                    )
+                }
+            }
+        }
+    }
+
+    fun dismissGoogleConflict() {
+        pendingGoogleCredential = null
+        _state.update {
+            it.copy(
+                googleConflictOpen = false,
+                googleConflictEmail = null
+            )
+        }
+    }
+
+    fun resolveGoogleConflict() {
+        val credential = pendingGoogleCredential ?: return
+        _state.update {
+            it.copy(
+                isGoogleLoading = true,
+                feedback = null,
+                googleConflictOpen = false
+            )
+        }
+
+        viewModelScope.launch {
+            try {
+                repository.resolveGoogleConflict(credential)
+                pendingGoogleCredential = null
+                _state.update {
+                    it.copy(
+                        isGoogleLoading = false,
+                        feedback = Feedback(FeedbackKind.Success, "Contas unificadas! Redirecionando...")
+                    )
+                }
+                _events.send(LoginEvent.ShowSnackbar("Contas unificadas com sucesso."))
+                delay(600)
+                _events.send(LoginEvent.NavigateHome)
+            } catch (throwable: Throwable) {
+                val backendError = parseBackendError(throwable)
+                val message = backendError?.message ?: "Não foi possível unificar as contas."
+                _state.update {
+                    it.copy(
+                        isGoogleLoading = false,
+                        feedback = Feedback(FeedbackKind.Error, message)
+                    )
+                }
+            }
+        }
+    }
+
+    private fun parseBackendError(throwable: Throwable): BackendErrorPayload? {
+        if (throwable !is HttpException) return null
+        val errorBody = throwable.response()?.errorBody() ?: return null
+        return try {
+            gson.fromJson(errorBody.charStream(), BackendErrorPayload::class.java)
+        } catch (ignore: Exception) {
+            null
         }
     }
 }
