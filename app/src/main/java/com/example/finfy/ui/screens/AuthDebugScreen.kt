@@ -2,7 +2,7 @@ package com.example.finfy.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -149,7 +149,9 @@ fun AuthDebugScreen() {
                 ) { Text("Logout") }
             }
 
-            Divider()
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+
 
             Text("Token em memória:")
             Text(token ?: "(sem token)")

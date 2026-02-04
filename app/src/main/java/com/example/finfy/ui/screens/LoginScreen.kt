@@ -133,14 +133,14 @@ fun LoginScreen(
             }
         }
 
-        if (uiState.feedback != null) {
+        uiState.feedback?.let { feedback ->
             InlineAlert(
                 variant = AlertVariant.Success,
                 title = null,
-                message = uiState.feedback
+                message = feedback
             )
         }
-
+ 
         val globalError = uiState.globalError
         if (globalError != null && isGlobalLoginError(globalError.kind) && globalError.message != null) {
             val title = when (globalError.kind) {
@@ -205,14 +205,12 @@ fun LoginScreen(
                 }
             },
             supportingText = {
-                if (uiState.passwordError != null) {
-                    Text(text = uiState.passwordError, color = MaterialTheme.colorScheme.error)
-                } else {
-                    Text(
-                        text = "Use sua senha cadastrada.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                uiState.passwordError?.let { err ->
+                    Text(text = err, color = MaterialTheme.colorScheme.error)
+                } ?: Text(
+                    text = "Use sua senha cadastrada.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             },
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Password,
